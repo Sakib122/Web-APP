@@ -28,112 +28,124 @@ db = client['movie_database']
 
 admin_temp = {}
 
+# --- ব্যাকগ্রাউন্ড অটো-ডিলিট ওয়ার্কার ---
+async def auto_delete_worker():
+    """এই ফাংশনটি প্রতি ১ মিনিট পর পর চেক করবে কোন মুভির সময় শেষ হয়েছে কিনা"""
+    while True:
+        try:
+            now = datetime.datetime.utcnow()
+            expired_msgs = db.auto_delete.find({"delete_at": {"$lte": now}})
+            async for msg in expired_msgs:
+                try:
+                    await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
+                except Exception:
+                    pass # যদি ইউজার আগেই ডিলিট করে দেয়
+                await db.auto_delete.delete_one({"_id": msg["_id"]})
+        except Exception as e:
+            print("Auto-Delete Worker Error:", e)
+        await asyncio.sleep(60) # প্রতি ৬০ সেকেন্ড পর পর চেক করবে
+
 # --- ১. বটের কাজ (অ্যাডমিন কমান্ড) ---
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
-    # ইউজার সেভ করা (Stats & Broadcast এর জন্য)
-    await db.users.update_one(
-        {"user_id": message.from_user.id}, 
-        {"$set": {"first_name": message.from_user.first_name}}, 
-        upsert=True
-    )
-    
+    await db.users.update_one({"user_id": message.from_user.id}, {"$set": {"first_name": message.from_user.first_name}}, upsert=True)
     kb = [[types.InlineKeyboardButton(text="🎬 ওপেন মুভি অ্যাপ", web_app=types.WebAppInfo(url=APP_URL))]]
     markup = types.InlineKeyboardMarkup(inline_keyboard=kb)
     
     if message.from_user.id == ADMIN_ID:
         text = (
             "👋 **হ্যালো অ্যাডমিন!**\n\n"
-            "⚙️ **কমান্ড প্যানেল:**\n"
-            "🔸 অ্যাড আইডি সেট: `/setad [ID]`\n"
-            "🔸 বাটন লিংক: `/settg [URL]` এবং `/set18 [URL]`\n"
-            "🔸 মুভি ডিলিট: `/del`\n"
-            "📊 স্ট্যাটাস চেক: `/stats`\n"
-            "📣 ব্রডকাস্ট: `/cast [আপনার মেসেজ]`\n\n"
-            "📥 **নতুন মুভি অ্যাড করতে প্রথমে ভিডিও বা ডকুমেন্ট ফাইল পাঠান।**"
+            "⚙️ **কমান্ড:**\n"
+            "🔸 জোন: `/setad` | টেলিগ্রাম: `/settg` | 18+: `/set18`\n"
+            "🔸 অটো-ডিলিট টাইম: `/settime [মিনিট]` (যেমন: /settime 60)\n"
+            "🔸 ডিলিট: `/del` | স্ট্যাটাস: `/stats` | ব্রডকাস্ট: `/cast`\n\n"
+            "📥 **মুভি অ্যাড করতে প্রথমে ভিডিও বা ডকুমেন্ট ফাইল পাঠান।**"
         )
     else:
         text = f"👋 **স্বাগতম {message.from_user.first_name}!**\nমুভি দেখতে নিচের বাটনে ক্লিক করুন।"
     await message.answer(text, reply_markup=markup, parse_mode="Markdown")
 
+@dp.message(Command("settime"))
+async def set_del_time(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        minutes = int(m.text.split(" ")[1])
+        await db.settings.update_one({"id": "del_time"}, {"$set": {"minutes": minutes}}, upsert=True)
+        await m.answer(f"✅ অটো-ডিলিট টাইম সেট করা হয়েছে: `{minutes}` মিনিট।")
+    except:
+        await m.answer("⚠️ ভুল ফরম্যাট! নিয়ম: `/settime 60` (৬০ মিনিট মানে ১ ঘন্টা)")
+
 @dp.message(Command("stats"))
-async def stats_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    users_count = await db.users.count_documents({})
-    movies_count = await db.movies.count_documents({})
-    await message.answer(f"📊 **অ্যাডমিন স্ট্যাটাস:**\n👥 মোট ইউজার: `{users_count}` জন\n🎬 মোট মুভি: `{movies_count}` টি")
+async def stats_cmd(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    uc = await db.users.count_documents({})
+    mc = await db.movies.count_documents({})
+    time_cfg = await db.settings.find_one({"id": "del_time"})
+    del_m = time_cfg['minutes'] if time_cfg else 60
+    await m.answer(f"📊 **স্ট্যাটাস:**\n👥 মোট ইউজার: `{uc}`\n🎬 মোট মুভি: `{mc}`\n⏳ অটো-ডিলিট: `{del_m} মিনিট`")
 
 @dp.message(Command("cast"))
-async def broadcast_cmd(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    text = message.text.replace("/cast", "").strip()
-    if not text: return await message.answer("⚠️ নিয়ম: `/cast আপনার মেসেজ`")
-    
-    await message.answer("⏳ ব্রডকাস্ট শুরু হয়েছে...")
-    users = await db.users.find().to_list(length=None)
+async def broadcast_cmd(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    text = m.text.replace("/cast", "").strip()
+    if not text: return await m.answer("⚠️ নিয়ম: `/cast মেসেজ`")
+    await m.answer("⏳ ব্রডকাস্ট শুরু হয়েছে...")
     success = 0
-    for u in users:
+    async for u in db.users.find():
         try:
             await bot.send_message(u['user_id'], text)
             success += 1
-            await asyncio.sleep(0.05) # Telegram limit safe
+            await asyncio.sleep(0.05)
         except: pass
-    await message.answer(f"✅ ব্রডকাস্ট সম্পন্ন! \nমেসেজ পাঠানো হয়েছে: {success} জনকে।")
+    await m.answer(f"✅ সম্পন্ন! মেসেজ পাঠানো হয়েছে: {success} জনকে।")
 
-# --- নতুন আপলোড লজিক (File -> Photo -> Text) ---
+# --- আপলোড ও ডিলিট ---
 @dp.message(F.document | F.video)
-async def catch_file(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    fid = message.video.file_id if message.video else message.document.file_id
-    ftype = "video" if message.video else "document"
-        
-    admin_temp[message.from_user.id] = {"step": "photo", "file_id": fid, "type": ftype}
-    await message.answer("✅ ফাইল পেয়েছি! এবার মুভির **পোস্টার (Photo)** সেন্ড করুন।")
+async def catch_file(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    fid = m.video.file_id if m.video else m.document.file_id
+    ftype = "video" if m.video else "document"
+    admin_temp[m.from_user.id] = {"step": "photo", "file_id": fid, "type": ftype}
+    await m.answer("✅ ফাইল পেয়েছি! এবার মুভির **পোস্টার (Photo)** সেন্ড করুন।")
 
 @dp.message(F.photo)
-async def catch_photo(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
-    uid = message.from_user.id
+async def catch_photo(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
+    uid = m.from_user.id
     if uid in admin_temp and admin_temp[uid].get("step") == "photo":
-        admin_temp[uid]["photo_id"] = message.photo[-1].file_id # Best resolution
+        admin_temp[uid]["photo_id"] = m.photo[-1].file_id
         admin_temp[uid]["step"] = "title"
-        await message.answer("✅ পোস্টার পেয়েছি! এবার মুভির **নাম** লিখে পাঠান।")
+        await m.answer("✅ পোস্টার পেয়েছি! এবার মুভির **নাম** লিখে পাঠান।")
 
 @dp.message(F.text)
-async def catch_text(message: types.Message):
-    uid = message.from_user.id
-    if uid != ADMIN_ID or str(message.text).startswith("/"): return
-    
+async def catch_text(m: types.Message):
+    uid = m.from_user.id
+    if uid != ADMIN_ID or str(m.text).startswith("/"): return
     if uid in admin_temp and admin_temp[uid].get("step") == "title":
-        title = message.text.strip()
-        await db.movies.insert_one({
-            "title": title, 
-            "photo_id": admin_temp[uid]["photo_id"],
-            "file_id": admin_temp[uid]["file_id"], 
-            "file_type": admin_temp[uid]["type"],
-            "created_at": datetime.datetime.utcnow()
-        })
+        title = m.text.strip()
+        await db.movies.insert_one({"title": title, "photo_id": admin_temp[uid]["photo_id"], "file_id": admin_temp[uid]["file_id"], "file_type": admin_temp[uid]["type"], "created_at": datetime.datetime.utcnow()})
         del admin_temp[uid]
-        await message.answer(f"🎉 **{title}** অ্যাপে সফলভাবে যুক্ত করা হয়েছে!")
+        await m.answer(f"🎉 **{title}** অ্যাপে সফলভাবে যুক্ত করা হয়েছে!")
 
-# --- মুভি ডিলিট ও লিংক কমান্ড (আগের মতোই) ---
 @dp.message(Command("del"))
-async def del_movie_list(message: types.Message):
-    if message.from_user.id != ADMIN_ID: return
+async def del_movie_list(m: types.Message):
+    if m.from_user.id != ADMIN_ID: return
     movies = await db.movies.find().sort("created_at", -1).limit(20).to_list(length=20)
-    if not movies: return await message.answer("কোনো মুভি নেই।")
+    if not movies: return await m.answer("কোনো মুভি নেই।")
     builder = InlineKeyboardBuilder()
-    for m in movies: builder.button(text=f"❌ {m['title']}", callback_data=f"del_{str(m['_id'])}")
+    for mv in movies: builder.button(text=f"❌ {mv['title']}", callback_data=f"del_{str(mv['_id'])}")
     builder.adjust(1)
-    await message.answer("⚠️ ডিলিট করতে ক্লিক করুন:", reply_markup=builder.as_markup())
+    await m.answer("⚠️ ডিলিট করতে ক্লিক করুন:", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("del_"))
 async def del_movie_callback(c: types.CallbackQuery):
     if c.from_user.id != ADMIN_ID: return
-    await db.movies.delete_one({"_id": ObjectId(c.data.split("_")[1])})
-    await c.answer("✅ ডিলিট হয়েছে!", show_alert=True)
-    await c.message.delete()
+    try:
+        await db.movies.delete_one({"_id": ObjectId(c.data.split("_")[1])})
+        await c.answer("✅ ডিলিট হয়েছে!", show_alert=True)
+        await c.message.edit_text("✅ মুভিটি ডাটাবেস থেকে মুছে ফেলা হয়েছে।", reply_markup=None)
+    except: pass
 
 @dp.message(Command("setad"))
 async def set_ad(m: types.Message):
@@ -153,7 +165,7 @@ async def set_18(m: types.Message):
         await db.settings.update_one({"id": "link_18"}, {"$set": {"url": m.text.split(" ")[1]}}, upsert=True)
         await m.answer("✅ 18+ লিংক আপডেট হয়েছে।")
 
-# --- ২. ওয়েব অ্যাপ UI (Skeletons, Scroll, Request Button) ---
+# --- ২. ওয়েব অ্যাপ UI ---
 
 @app.get("/", response_class=HTMLResponse)
 async def web_ui():
@@ -175,7 +187,7 @@ async def web_ui():
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
         <style>
             * { margin:0; padding:0; box-sizing:border-box; }
-            body { background:#0f172a; font-family: sans-serif; color:#fff; } /* Dark Mode Default */
+            body { background:#0f172a; font-family: sans-serif; color:#fff; } 
             header { display:flex; justify-content:space-between; align-items:center; padding:15px; border-bottom:1px solid #1e293b; position:sticky; top:0; background:#0f172a; z-index:1000; }
             .logo { font-size:24px; font-weight:bold; }
             .logo span { background:red; color:#fff; padding:2px 5px; border-radius:5px; margin-left:5px; font-size:16px; }
@@ -185,21 +197,27 @@ async def web_ui():
             .search-input { width:100%; padding:14px; border-radius:25px; border:none; outline:none; text-align:center; background:#1e293b; color:#fff; font-size:16px; transition: 0.3s; }
             .search-input:focus { box-shadow: 0 0 10px rgba(248,113,113,0.5); }
             
-            .grid { padding:0 15px 100px; display: grid; gap: 20px; }
-            .card { background:#1e293b; border-radius:15px; overflow:hidden; cursor:pointer; transition: transform 0.2s; }
-            .card:active { transform: scale(0.98); }
-            .post-content { position:relative; }
-            .post-content img { width:100%; height:220px; object-fit:cover; display:block; }
-            .lock-overlay { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); background:rgba(0,0,0,0.7); padding:8px 15px; border-radius:20px; color:red; font-weight:bold; font-size:12px; }
-            .card-footer { padding:12px; font-size:15px; font-weight:bold; }
+            .grid { padding:0 15px 100px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
+            .card { background:#1e293b; border-radius:12px; overflow:hidden; cursor:pointer; transition: transform 0.2s; }
+            .card:active { transform: scale(0.95); }
             
-            /* Skeleton Loading CSS */
-            .skeleton { background: #1e293b; border-radius: 15px; height: 270px; overflow: hidden; position: relative; }
-            .skeleton::after {
-                content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-                background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent);
-                animation: shimmer 1.5s infinite;
+            .post-content { 
+                position:relative; padding: 3px; border-radius: 12px;
+                background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00, #48ff00, #00ffd5, #002bff, #7a00ff, #ff00c8, #ff0000);
+                background-size: 400%; animation: glowing 8s linear infinite;
             }
+            @keyframes glowing { 0% { background-position: 0 0; } 50% { background-position: 400% 0; } 100% { background-position: 0 0; } }
+
+            .post-content img { width:100%; height:180px; object-fit:cover; display:block; border-radius: 10px; }
+            
+            .tag { position:absolute; top:50%; left:50%; transform:translate(-50%, -50%); padding:6px 12px; border-radius:20px; font-weight:bold; font-size:12px; display:flex; align-items:center; gap:5px; box-shadow: 0 2px 10px rgba(0,0,0,0.5); }
+            .tag-locked { background:rgba(0,0,0,0.8); color:#f87171; border: 1px solid #f87171; }
+            .tag-unlocked { background:rgba(0,0,0,0.8); color:#10b981; border: 1px solid #10b981; }
+            
+            .card-footer { padding:10px 5px; font-size:13px; font-weight:bold; text-align:center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color:#e2e8f0; }
+            
+            .skeleton { background: #1e293b; border-radius: 12px; height: 215px; overflow: hidden; position: relative; }
+            .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
             .floating-btn { position:fixed; right:20px; color:white; width:50px; height:50px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:20px; font-weight:bold; z-index:500; cursor:pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
@@ -232,23 +250,20 @@ async def web_ui():
         <div class="floating-btn btn-tg" onclick="window.open('{{TG_LINK}}')"><i class="fa-brands fa-telegram"></i></div>
         <div class="floating-btn btn-req" onclick="openReqModal()"><i class="fa-solid fa-code-pull-request"></i></div>
 
-        <!-- Ad Screen -->
         <div id="adScreen" class="ad-screen">
             <div class="timer" id="timer">15</div>
             <p>সার্ভারের সাথে কানেক্ট হচ্ছে...</p>
         </div>
 
-        <!-- Success Modal -->
         <div id="successModal" class="modal">
             <div class="modal-content">
                 <i class="fa-solid fa-circle-check" style="font-size:60px; color:#10b981;"></i>
                 <h2 style="margin:15px 0;">সম্পন্ন হয়েছে!</h2>
-                <p style="margin-bottom: 20px; color:gray;">বটের ইনবক্স চেক করুন, মুভি পাঠানো হয়েছে।</p>
+                <p style="margin-bottom: 20px; color:gray; font-size:14px;">বটের ইনবক্স চেক করুন। <br><span style="color:#f87171;">সতর্কতা: কপিরাইট এড়াতে মুভিটি কিছুক্ষণ পর অটোমেটিক ডিলিট হয়ে যাবে।</span></p>
                 <button class="btn-submit" onclick="tg.close()">বটে ফিরে যান</button>
             </div>
         </div>
 
-        <!-- Request Modal -->
         <div id="reqModal" class="modal">
             <div class="modal-content">
                 <h2>মুভি রিকোয়েস্ট করুন</h2>
@@ -262,10 +277,8 @@ async def web_ui():
             let tg = window.Telegram.WebApp; tg.expand();
             const ZONE_ID = "{{ZONE_ID}}";
             
-            let page = 1;
-            let isLoading = false;
-            let hasMore = true;
-            let searchQuery = "";
+            let page = 1; let isLoading = false; let hasMore = true; let searchQuery = "";
+            let uid = tg.initDataUnsafe.user?.id || 0;
 
             if(tg.initDataUnsafe && tg.initDataUnsafe.user) {
                 document.getElementById('uName').innerText = tg.initDataUnsafe.user.first_name;
@@ -277,74 +290,73 @@ async def web_ui():
             document.head.appendChild(s);
 
             function drawSkeletons(count) {
-                let html = "";
-                for(let i=0; i<count; i++) html += `<div class="skeleton"></div>`;
-                return html;
+                let html = ""; for(let i=0; i<count; i++) html += `<div class="skeleton"></div>`; return html;
             }
 
             async function loadMovies(reset = false) {
                 if(isLoading || (!hasMore && !reset)) return;
                 isLoading = true;
                 const grid = document.getElementById('movieGrid');
-                
-                if(reset) { page = 1; hasMore = true; grid.innerHTML = drawSkeletons(4); }
-                else { grid.innerHTML += drawSkeletons(2); } // Append skeletons at bottom
+                if(reset) { page = 1; hasMore = true; grid.innerHTML = drawSkeletons(6); }
+                else { grid.innerHTML += drawSkeletons(4); }
 
                 try {
-                    const r = await fetch(`/api/list?page=${page}&q=${searchQuery}`);
+                    const r = await fetch(`/api/list?page=${page}&q=${searchQuery}&uid=${uid}`);
                     const data = await r.json();
-                    
-                    // Remove skeletons
                     grid.querySelectorAll('.skeleton').forEach(el => el.remove());
 
                     if(data.length === 0) {
                         hasMore = false;
-                        if(page === 1) grid.innerHTML = "<p style='text-align:center;color:gray;padding:20px;'>কোনো মুভি পাওয়া যায়নি!</p>";
+                        if(page === 1) grid.innerHTML = "<p style='grid-column: span 2; text-align:center; color:gray; padding:20px;'>কোনো মুভি পাওয়া যায়নি!</p>";
                     } else {
-                        const html = data.map(m => `
-                            <div class="card" onclick="startAd('${m._id}')">
+                        const html = data.map(m => {
+                            let tagHtml = m.is_unlocked 
+                                ? `<div class="tag tag-unlocked"><i class="fa-solid fa-unlock"></i> 24h Unlocked</div>` 
+                                : `<div class="tag tag-locked"><i class="fa-solid fa-lock"></i> Locked</div>`;
+                                
+                            return `
+                            <div class="card" onclick="handleMovieClick('${m._id}', ${m.is_unlocked})">
                                 <div class="post-content">
-                                    <img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/400x200?text=Image+Error'">
-                                    <div class="lock-overlay"><i class="fa-solid fa-lock"></i> Locked</div>
+                                    <img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/400x200?text=No+Image'">
+                                    ${tagHtml}
                                 </div>
                                 <div class="card-footer">${m.title}</div>
-                            </div>
-                        `).join('');
-                        
+                            </div>`;
+                        }).join('');
                         if(reset) grid.innerHTML = html; else grid.innerHTML += html;
                         page++;
                     }
-                } catch(e) { console.log(e); }
+                } catch(e) {}
                 isLoading = false;
             }
 
-            // Live Search with Debounce
             let timeout = null;
             document.getElementById('searchInput').addEventListener('input', function(e) {
-                clearTimeout(timeout);
-                searchQuery = e.target.value.trim();
-                timeout = setTimeout(() => { loadMovies(true); }, 500); // 500ms delay
+                clearTimeout(timeout); searchQuery = e.target.value.trim();
+                timeout = setTimeout(() => { loadMovies(true); }, 500);
             });
 
-            // Infinite Scroll
-            window.addEventListener('scroll', () => {
-                if(window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) loadMovies();
-            });
+            window.addEventListener('scroll', () => { if(window.innerHeight + window.scrollY >= document.body.offsetHeight - 200) loadMovies(); });
 
-            function startAd(id) {
-                if (typeof window['show_' + ZONE_ID] === 'function') window['show_' + ZONE_ID]();
-                document.getElementById('adScreen').style.display = 'flex';
-                let t = 15;
-                let iv = setInterval(() => {
-                    t--; document.getElementById('timer').innerText = t;
-                    if(t <= 0) { clearInterval(iv); sendFile(id); }
-                }, 1000);
+            function handleMovieClick(id, isUnlocked) {
+                if(isUnlocked) {
+                    document.getElementById('successModal').style.display = 'flex';
+                    sendFile(id);
+                } else {
+                    if (typeof window['show_' + ZONE_ID] === 'function') window['show_' + ZONE_ID]();
+                    document.getElementById('adScreen').style.display = 'flex';
+                    let t = 15;
+                    let iv = setInterval(() => {
+                        t--; document.getElementById('timer').innerText = t;
+                        if(t <= 0) { clearInterval(iv); sendFile(id); }
+                    }, 1000);
+                }
             }
 
             async function sendFile(id) {
-                await fetch('/api/send', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({userId: tg.initDataUnsafe.user?.id || 0, movieId: id})});
+                await fetch('/api/send', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({userId: uid, movieId: id})});
                 document.getElementById('adScreen').style.display = 'none';
-                document.getElementById('successModal').style.display = 'flex';
+                setTimeout(() => { loadMovies(true); }, 1000); 
             }
 
             function openReqModal() { document.getElementById('reqModal').style.display = 'flex'; }
@@ -352,15 +364,13 @@ async def web_ui():
             async function sendReq() {
                 const text = document.getElementById('reqText').value;
                 if(!text) return alert('মুভির নাম লিখুন!');
-                await fetch('/api/request', { method:'POST', headers:{'Content-Type':'application/json'}, 
-                    body:JSON.stringify({uid: tg.initDataUnsafe.user?.id || 0, uname: tg.initDataUnsafe.user?.first_name || 'Guest', movie: text})
-                });
+                await fetch('/api/request', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({uid: uid, uname: tg.initDataUnsafe.user?.first_name || 'Guest', movie: text})});
                 document.getElementById('reqModal').style.display = 'none';
                 document.getElementById('reqText').value = '';
                 alert('রিকোয়েস্ট সফলভাবে পাঠানো হয়েছে!');
             }
 
-            loadMovies(true); // Initial load
+            loadMovies(true); 
         </script>
     </body>
     </html>
@@ -370,60 +380,73 @@ async def web_ui():
 
 # --- ৩. API এন্ডপয়েন্ট ---
 
-# 3.1: Paginated & Searchable List
 @app.get("/api/list")
-async def list_movies(page: int = 1, q: str = ""):
-    limit = 10
+async def list_movies(page: int = 1, q: str = "", uid: int = 0):
+    limit = 12
     skip = (page - 1) * limit
     query = {"title": {"$regex": q, "$options": "i"}} if q else {}
     
+    unlocked_movie_ids = []
+    if uid != 0:
+        time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
+            unlocked_movie_ids.append(u["movie_id"])
+
     movies = []
     async for m in db.movies.find(query).sort("created_at", -1).skip(skip).limit(limit):
-        m["_id"] = str(m["_id"])
+        m_id = str(m["_id"])
+        m["_id"] = m_id
         m["created_at"] = str(m.get("created_at", ""))
+        m["is_unlocked"] = m_id in unlocked_movie_ids 
         movies.append(m)
     return movies
 
-# 3.2: Proxy Image Endpoint (টেলিগ্রামের ছবি ওয়েবপেজে দেখানোর জন্য)
 @app.get("/api/image/{photo_id}")
 async def get_image(photo_id: str):
     try:
         file_info = await bot.get_file(photo_id)
         file_url = f"https://api.telegram.org/file/bot{TOKEN}/{file_info.file_path}"
-        
         async def stream_image():
             async with aiohttp.ClientSession() as session:
                 async with session.get(file_url) as resp:
-                    async for chunk in resp.content.iter_chunked(1024):
-                        yield chunk
+                    async for chunk in resp.content.iter_chunked(1024): yield chunk
         return StreamingResponse(stream_image(), media_type="image/jpeg")
-    except Exception as e:
-        print("Image Error:", e)
-        return {"error": "Image not found"}
+    except: return {"error": "not found"}
 
-# 3.3: Send File Endpoint
 @app.post("/api/send")
 async def send_file(d: dict = Body(...)):
-    if d['userId'] == 0: return {"ok": False}
+    uid = d['userId']
+    mid = d['movieId']
+    if uid == 0: return {"ok": False}
     try:
-        m = await db.movies.find_one({"_id": ObjectId(d['movieId'])})
+        m = await db.movies.find_one({"_id": ObjectId(mid)})
         if m:
-            caption = f"🎥 **{m['title']}**\n\n📥 Join: @MovieeBD"
-            if m.get("file_type") == "video": await bot.send_video(d['userId'], m['file_id'], caption=caption)
-            else: await bot.send_document(d['userId'], m['file_id'], caption=caption)
+            # ডিলিট টাইম আনা হচ্ছে (ডিফল্ট ৬০ মিনিট)
+            time_cfg = await db.settings.find_one({"id": "del_time"})
+            del_minutes = time_cfg['minutes'] if time_cfg else 60
+            
+            caption = f"🎥 **{m['title']}**\n\n⏳ **সতর্কতা:** কপিরাইট এড়াতে মুভিটি **{del_minutes} মিনিট** পর অটো-ডিলিট হয়ে যাবে। দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @MovieeBD"
+            
+            sent_msg = None
+            if m.get("file_type") == "video": sent_msg = await bot.send_video(uid, m['file_id'], caption=caption)
+            else: sent_msg = await bot.send_document(uid, m['file_id'], caption=caption)
+            
+            # ডাটাবেসে আনলক টাইম আপডেট (২৪ ঘন্টার জন্য আনলকড)
+            await db.user_unlocks.update_one({"user_id": uid, "movie_id": mid}, {"$set": {"unlocked_at": datetime.datetime.utcnow()}}, upsert=True)
+            
+            # ডাটাবেসে ডিলিট টাস্ক সেভ করা (ম্যাসেজটি ডিলিট করার জন্য)
+            if sent_msg:
+                delete_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=del_minutes)
+                await db.auto_delete.insert_one({"chat_id": uid, "message_id": sent_msg.message_id, "delete_at": delete_at})
     except: pass
     return {"ok": True}
 
-# 3.4: Request Movie Endpoint
 class ReqModel(BaseModel):
-    uid: int
-    uname: str
-    movie: str
+    uid: int; uname: str; movie: str
 
 @app.post("/api/request")
 async def handle_request(data: ReqModel):
-    text = f"🔔 **নতুন মুভি রিকোয়েস্ট!**\n\n👤 ইউজার: {data.uname} (`{data.uid}`)\n🎬 মুভির নাম: **{data.movie}**"
-    try: await bot.send_message(ADMIN_ID, text)
+    try: await bot.send_message(ADMIN_ID, f"🔔 **মুভি রিকোয়েস্ট!**\n\n👤 ইউজার: {data.uname} (`{data.uid}`)\n🎬 নাম: **{data.movie}**")
     except: pass
     return {"ok": True}
 
@@ -431,8 +454,11 @@ async def start():
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
+    
+    # অটো ডিলিট ব্যাকগ্রাউন্ড প্রসেস চালু করা হলো
+    asyncio.create_task(auto_delete_worker())
+    
     await bot.delete_webhook(drop_pending_updates=True)
     await asyncio.gather(server.serve(), dp.start_polling(bot))
 
-if __name__ == "__main__":
-    asyncio.run(start())
+if __name__ == "__main__": asyncio.run(start())
