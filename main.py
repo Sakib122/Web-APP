@@ -37,11 +37,9 @@ async def auto_delete_worker():
             async for msg in expired_msgs:
                 try:
                     await bot.delete_message(chat_id=msg["chat_id"], message_id=msg["message_id"])
-                except Exception:
-                    pass
+                except Exception: pass
                 await db.auto_delete.delete_one({"_id": msg["_id"]})
-        except Exception as e:
-            pass
+        except Exception as e: pass
         await asyncio.sleep(60)
 
 # ==========================================
@@ -67,16 +65,6 @@ async def start_cmd(message: types.Message):
         text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n[আপনার টেলিগ্রাম আইডি: <code>{message.from_user.id}</code>]\n\nমুভি দেখতে নিচের বাটনে ক্লিক করুন।"
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
-@dp.message(Command("settime"))
-async def set_del_time(m: types.Message):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        minutes = int(m.text.split(" ")[1])
-        await db.settings.update_one({"id": "del_time"}, {"$set": {"minutes": minutes}}, upsert=True)
-        await m.answer(f"✅ অটো-ডিলিট টাইম সেট করা হয়েছে: <b>{minutes}</b> মিনিট।", parse_mode="HTML")
-    except:
-        await m.answer("⚠️ ভুল ফরম্যাট! নিয়ম: <code>/settime 60</code>", parse_mode="HTML")
-
 @dp.message(Command("stats"))
 async def stats_cmd(m: types.Message):
     if m.from_user.id != ADMIN_ID: return
@@ -85,21 +73,6 @@ async def stats_cmd(m: types.Message):
     time_cfg = await db.settings.find_one({"id": "del_time"})
     del_m = time_cfg['minutes'] if time_cfg else 60
     await m.answer(f"📊 <b>স্ট্যাটাস:</b>\n👥 মোট ইউজার: <code>{uc}</code>\n🎬 মোট মুভি: <code>{mc}</code>\n⏳ অটো-ডিলিট: <code>{del_m} মিনিট</code>", parse_mode="HTML")
-
-@dp.message(Command("cast"))
-async def broadcast_cmd(m: types.Message):
-    if m.from_user.id != ADMIN_ID: return
-    text = m.text.replace("/cast", "").strip()
-    if not text: return await m.answer("⚠️ নিয়ম: <code>/cast মেসেজ</code>", parse_mode="HTML")
-    await m.answer("⏳ ব্রডকাস্ট শুরু হয়েছে...")
-    success = 0
-    async for u in db.users.find():
-        try:
-            await bot.send_message(u['user_id'], text)
-            success += 1
-            await asyncio.sleep(0.05)
-        except: pass
-    await m.answer(f"✅ সম্পন্ন! মেসেজ পাঠানো হয়েছে: {success} জনকে।")
 
 @dp.message(Command("del"))
 async def del_movie_list(m: types.Message):
@@ -120,66 +93,90 @@ async def del_movie_callback(c: types.CallbackQuery):
         await c.message.edit_text("✅ মুভিটি ডাটাবেস থেকে মুছে ফেলা হয়েছে।", reply_markup=None)
     except: pass
 
+@dp.message(Command("settime"))
+async def set_del_time(m: types.Message):
+    if m.from_user.id == ADMIN_ID:
+        try:
+            await db.settings.update_one({"id": "del_time"}, {"$set": {"minutes": int(m.text.split(" ")[1])}}, upsert=True)
+            await m.answer(f"✅ অটো-ডিলিট টাইম সেট করা হয়েছে।")
+        except: await m.answer("⚠️ সঠিক নিয়ম: <code>/settime 60</code>", parse_mode="HTML")
+
 @dp.message(Command("setad"))
 async def set_ad(m: types.Message):
     if m.from_user.id == ADMIN_ID:
         try:
-            val = m.text.split(" ")[1]
-            await db.settings.update_one({"id": "ad_config"}, {"$set": {"zone_id": val}}, upsert=True)
-            await m.answer(f"✅ জোন আপডেট হয়েছে: {val}")
-        except:
-            await m.answer("⚠️ সঠিক নিয়ম: <code>/setad 1234567</code>", parse_mode="HTML")
+            await db.settings.update_one({"id": "ad_config"}, {"$set": {"zone_id": m.text.split(" ")[1]}}, upsert=True)
+            await m.answer("✅ জোন আপডেট হয়েছে।")
+        except: await m.answer("⚠️ সঠিক নিয়ম: <code>/setad 1234567</code>", parse_mode="HTML")
 
 @dp.message(Command("settg"))
 async def set_tg(m: types.Message):
     if m.from_user.id == ADMIN_ID:
         try:
-            val = m.text.split(" ")[1]
-            await db.settings.update_one({"id": "link_tg"}, {"$set": {"url": val}}, upsert=True)
+            await db.settings.update_one({"id": "link_tg"}, {"$set": {"url": m.text.split(" ")[1]}}, upsert=True)
             await m.answer("✅ টেলিগ্রাম লিংক আপডেট হয়েছে।")
-        except:
-            await m.answer("⚠️ সঠিক নিয়ম: <code>/settg https://t.me/...</code>", parse_mode="HTML")
+        except: await m.answer("⚠️ সঠিক নিয়ম: <code>/settg https://t.me/...</code>", parse_mode="HTML")
 
 @dp.message(Command("set18"))
 async def set_18(m: types.Message):
     if m.from_user.id == ADMIN_ID:
         try:
-            val = m.text.split(" ")[1]
-            await db.settings.update_one({"id": "link_18"}, {"$set": {"url": val}}, upsert=True)
+            await db.settings.update_one({"id": "link_18"}, {"$set": {"url": m.text.split(" ")[1]}}, upsert=True)
             await m.answer("✅ 18+ লিংক আপডেট হয়েছে।")
-        except:
-            await m.answer("⚠️ সঠিক নিয়ম: <code>/set18 https://t.me/...</code>", parse_mode="HTML")
+        except: await m.answer("⚠️ সঠিক নিয়ম: <code>/set18 https://t.me/...</code>", parse_mode="HTML")
 
 # ==========================================
-# ২. ফাইল এবং টেক্সট রিসিভ করা (Upload Flow)
+# ২. অ্যাডভান্সড ব্রডকাস্ট এবং ফাইল আপলোড
 # ==========================================
 
-@dp.message(F.document | F.video)
-async def catch_file(m: types.Message):
+@dp.message(Command("cast"))
+async def broadcast_prep(m: types.Message):
     if m.from_user.id != ADMIN_ID: return
-    fid = m.video.file_id if m.video else m.document.file_id
-    ftype = "video" if m.video else "document"
-    admin_temp[m.from_user.id] = {"step": "photo", "file_id": fid, "type": ftype}
-    await m.answer("✅ ফাইল পেয়েছি! এবার মুভির <b>পোস্টার (Photo)</b> সেন্ড করুন।", parse_mode="HTML")
+    admin_temp[m.from_user.id] = {"step": "bcast_wait"}
+    await m.answer("📢 <b>অ্যাডভান্সড ব্রডকাস্ট:</b>\nযে মেসেজটি (ছবি/ভিডিও/টেক্সট) ব্রডকাস্ট করতে চান, সেটি এখানে পাঠান বা ফরোয়ার্ড করুন।\n\n<i>নোট: বট অটোমেটিক মেসেজের নিচে '🎬 ওপেন মুভি অ্যাপ' বাটন লাগিয়ে সবাইকে পাঠিয়ে দিবে।</i>", parse_mode="HTML")
 
-@dp.message(F.photo)
-async def catch_photo(m: types.Message):
-    if m.from_user.id != ADMIN_ID: return
+@dp.message(F.content_type.in_({'text', 'photo', 'video', 'document'}))
+async def catch_all_inputs(m: types.Message):
     uid = m.from_user.id
-    if uid in admin_temp and admin_temp[uid].get("step") == "photo":
+    
+    # অ্যাডভান্সড ব্রডকাস্ট ফ্লো
+    if uid == ADMIN_ID and admin_temp.get(uid, {}).get("step") == "bcast_wait":
+        del admin_temp[uid]
+        await m.answer("⏳ ব্রডকাস্ট শুরু হয়েছে...")
+        kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text="🎬 ওপেন মুভি অ্যাপ", web_app=types.WebAppInfo(url=APP_URL))]])
+        success = 0
+        async for u in db.users.find():
+            try:
+                await m.copy_to(chat_id=u['user_id'], reply_markup=kb)
+                success += 1
+                await asyncio.sleep(0.05)
+            except: pass
+        await m.answer(f"✅ সম্পন্ন! সর্বমোট <b>{success}</b> জনকে মেসেজ পাঠানো হয়েছে।", parse_mode="HTML")
+        return
+
+    # মুভি আপলোড ফ্লো - স্টেপ ১ (ফাইল)
+    if uid == ADMIN_ID and (m.document or m.video):
+        fid = m.video.file_id if m.video else m.document.file_id
+        ftype = "video" if m.video else "document"
+        admin_temp[uid] = {"step": "photo", "file_id": fid, "type": ftype}
+        await m.answer("✅ ফাইল পেয়েছি! এবার মুভির <b>পোস্টার (Photo)</b> সেন্ড করুন।", parse_mode="HTML")
+        return
+
+    # মুভি আপলোড ফ্লো - স্টেপ ২ (পোস্টার)
+    if uid == ADMIN_ID and m.photo and admin_temp.get(uid, {}).get("step") == "photo":
         admin_temp[uid]["photo_id"] = m.photo[-1].file_id
         admin_temp[uid]["step"] = "title"
         await m.answer("✅ পোস্টার পেয়েছি! এবার মুভির <b>নাম</b> লিখে পাঠান।", parse_mode="HTML")
+        return
 
-@dp.message(F.text)
-async def catch_text(m: types.Message):
-    uid = m.from_user.id
-    if uid != ADMIN_ID or str(m.text).startswith("/"): return
-    if uid in admin_temp and admin_temp[uid].get("step") == "title":
-        title = m.text.strip()
-        await db.movies.insert_one({"title": title, "photo_id": admin_temp[uid]["photo_id"], "file_id": admin_temp[uid]["file_id"], "file_type": admin_temp[uid]["type"], "created_at": datetime.datetime.utcnow()})
-        del admin_temp[uid]
-        await m.answer(f"🎉 <b>{title}</b> অ্যাপে সফলভাবে যুক্ত করা হয়েছে!", parse_mode="HTML")
+    # মুভি আপলোড ফ্লো - স্টেপ ৩ (নাম)
+    if uid == ADMIN_ID and m.text and not str(m.text).startswith("/"):
+        if admin_temp.get(uid, {}).get("step") == "title":
+            title = m.text.strip()
+            # clicks: 0 অ্যাড করা হয়েছে ট্রেন্ডিং ফিচারের জন্য
+            await db.movies.insert_one({"title": title, "photo_id": admin_temp[uid]["photo_id"], "file_id": admin_temp[uid]["file_id"], "file_type": admin_temp[uid]["type"], "clicks": 0, "created_at": datetime.datetime.utcnow()})
+            del admin_temp[uid]
+            await m.answer(f"🎉 <b>{title}</b> অ্যাপে সফলভাবে যুক্ত করা হয়েছে!", parse_mode="HTML")
 
 # ==========================================
 # ৩. ওয়েব অ্যাপ UI এবং APIs
@@ -216,6 +213,16 @@ async def web_ui():
             .search-input { width:100%; padding:14px; border-radius:25px; border:none; outline:none; text-align:center; background:#1e293b; color:#fff; font-size:16px; transition: 0.3s; }
             .search-input:focus { box-shadow: 0 0 10px rgba(248,113,113,0.5); }
             
+            /* Section Titles */
+            .section-title { padding: 5px 15px 10px; font-size: 18px; font-weight: bold; color: #f87171; display:flex; align-items:center; gap:8px;}
+            
+            /* Trending Slider Styles */
+            .trending-container { display: flex; overflow-x: auto; gap: 12px; padding: 0 15px 20px; scroll-behavior: smooth; }
+            .trending-container::-webkit-scrollbar { display: none; }
+            .trending-card { min-width: 130px; max-width: 130px; background: #1e293b; border-radius: 12px; overflow: hidden; cursor: pointer; flex-shrink: 0; position:relative;}
+            .trending-card img { height: 170px; object-fit:cover; width:100%; border-radius:10px; display:block; }
+            .trending-card .post-content { padding:3px; background: linear-gradient(45deg, #ff0000, #ff7300, #fffb00); border-radius: 12px; }
+            
             .grid { padding:0 15px 20px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; }
             .card { background:#1e293b; border-radius:12px; overflow:hidden; cursor:pointer; transition: transform 0.2s; }
             .card:active { transform: scale(0.95); }
@@ -229,20 +236,20 @@ async def web_ui():
 
             .post-content img { width:100%; height:180px; object-fit:cover; display:block; border-radius: 10px; }
             
-            .tag { position:absolute; top:10px; right:10px; padding:4px 8px; border-radius:8px; font-weight:bold; font-size:11px; display:flex; align-items:center; gap:4px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
+            .tag { position:absolute; top:8px; right:8px; padding:4px 6px; border-radius:6px; font-weight:bold; font-size:10px; display:flex; align-items:center; gap:4px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
             .tag-locked { background:rgba(0,0,0,0.85); color:#f87171; border: 1px solid #f87171; }
             .tag-unlocked { background:rgba(0,0,0,0.85); color:#10b981; border: 1px solid #10b981; }
             
+            .top-badge { position:absolute; top:8px; left:8px; background:red; color:white; padding:3px 6px; border-radius:6px; font-size:10px; font-weight:bold; box-shadow: 0 2px 5px rgba(0,0,0,0.5); z-index:10;}
+
             .card-footer { padding:10px; font-size:13px; font-weight:bold; text-align:center; word-wrap: break-word; color:#e2e8f0; line-height:1.4; }
             
             .skeleton { background: #1e293b; border-radius: 12px; height: 215px; overflow: hidden; position: relative; }
             .skeleton::after { content: ""; position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent); animation: shimmer 1.5s infinite; }
             @keyframes shimmer { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
 
-            /* Pagination Styles */
             .pagination { display: flex; justify-content: center; align-items: center; gap: 8px; padding: 10px 15px 120px; flex-wrap: wrap; }
             .page-btn { background: #1e293b; color: #fff; border: 1px solid #334155; padding: 10px 15px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: 0.2s; outline: none; }
-            .page-btn:active { transform: scale(0.9); }
             .page-btn.active { background: #f87171; border-color: #f87171; color: white; }
             .page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
@@ -270,9 +277,19 @@ async def web_ui():
             <input type="text" id="searchInput" class="search-input" placeholder="মুভি বা ওয়েব সিরিজ খুঁজুন...">
         </div>
 
+        <!-- Trending Section -->
+        <div id="trendingWrapper">
+            <div class="section-title"><i class="fa-solid fa-fire"></i> ট্রেন্ডিং মুভি</div>
+            <div class="trending-container" id="trendingGrid">
+                <div class="skeleton" style="min-width:130px; height:180px;"></div>
+                <div class="skeleton" style="min-width:130px; height:180px;"></div>
+                <div class="skeleton" style="min-width:130px; height:180px;"></div>
+            </div>
+        </div>
+
+        <div class="section-title"><i class="fa-solid fa-film"></i> নতুন সব মুভি</div>
         <div class="grid" id="movieGrid"></div>
         
-        <!-- Pagination Box -->
         <div class="pagination" id="paginationBox"></div>
 
         <div class="floating-btn btn-18" onclick="window.open('{{LINK_18}}')">18+</div>
@@ -322,7 +339,31 @@ async def web_ui():
                 let html = ""; for(let i=0; i<count; i++) html += `<div class="skeleton"></div>`; return html;
             }
 
-            // মুভি লোড করা (পেজ অনুযায়ী)
+            // ট্রেন্ডিং মুভি লোড করা (Top 10)
+            async function loadTrending() {
+                try {
+                    const r = await fetch(`/api/trending?uid=${uid}`);
+                    const data = await r.json();
+                    const grid = document.getElementById('trendingGrid');
+                    if(data.length === 0) {
+                        document.getElementById('trendingWrapper').style.display = 'none';
+                        return;
+                    }
+                    grid.innerHTML = data.map(m => {
+                        let tagHtml = m.is_unlocked ? `<div class="tag tag-unlocked"><i class="fa-solid fa-unlock"></i></div>` : `<div class="tag tag-locked"><i class="fa-solid fa-lock"></i></div>`;
+                        return `
+                        <div class="trending-card" onclick="handleMovieClick('${m._id}', ${m.is_unlocked})">
+                            <div class="post-content">
+                                <div class="top-badge">🔥 TOP</div>
+                                <img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/400x200?text=No+Image'">
+                                ${tagHtml}
+                            </div>
+                            <div class="card-footer" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${m.title}</div>
+                        </div>`;
+                    }).join('');
+                } catch(e) {}
+            }
+
             async function loadMovies(page = 1) {
                 if(isLoading) return;
                 isLoading = true;
@@ -342,10 +383,7 @@ async def web_ui():
                         grid.innerHTML = "<p style='grid-column: span 2; text-align:center; color:gray; padding:20px;'>কোনো মুভি পাওয়া যায়নি!</p>";
                     } else {
                         grid.innerHTML = data.movies.map(m => {
-                            let tagHtml = m.is_unlocked 
-                                ? `<div class="tag tag-unlocked"><i class="fa-solid fa-unlock"></i> Unlocked</div>` 
-                                : `<div class="tag tag-locked"><i class="fa-solid fa-lock"></i> Locked</div>`;
-                                
+                            let tagHtml = m.is_unlocked ? `<div class="tag tag-unlocked"><i class="fa-solid fa-unlock"></i></div>` : `<div class="tag tag-locked"><i class="fa-solid fa-lock"></i></div>`;
                             return `
                             <div class="card" onclick="handleMovieClick('${m._id}', ${m.is_unlocked})">
                                 <div class="post-content">
@@ -355,53 +393,37 @@ async def web_ui():
                                 <div class="card-footer">${m.title}</div>
                             </div>`;
                         }).join('');
-                        
                         renderPagination(data.total_pages);
                     }
                 } catch(e) {}
                 isLoading = false;
             }
 
-            // পেজ বাটন তৈরি করা
             function renderPagination(totalPages) {
                 if (totalPages <= 1) return;
                 let html = "";
-                
                 html += `<button class="page-btn" ${currentPage === 1 ? 'disabled' : ''} onclick="goToPage(${currentPage - 1})"><i class="fa-solid fa-angle-left"></i></button>`;
-                
                 let start = Math.max(1, currentPage - 1);
                 let end = Math.min(totalPages, currentPage + 1);
-                
-                if (start > 1) {
-                    html += `<button class="page-btn" onclick="goToPage(1)">1</button>`;
-                    if (start > 2) html += `<span style="color:gray;">...</span>`;
-                }
-                
-                for (let i = start; i <= end; i++) {
-                    html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`;
-                }
-                
-                if (end < totalPages) {
-                    if (end < totalPages - 1) html += `<span style="color:gray;">...</span>`;
-                    html += `<button class="page-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`;
-                }
-                
+                if (start > 1) { html += `<button class="page-btn" onclick="goToPage(1)">1</button>`; if (start > 2) html += `<span style="color:gray;">...</span>`; }
+                for (let i = start; i <= end; i++) { html += `<button class="page-btn ${i === currentPage ? 'active' : ''}" onclick="goToPage(${i})">${i}</button>`; }
+                if (end < totalPages) { if (end < totalPages - 1) html += `<span style="color:gray;">...</span>`; html += `<button class="page-btn" onclick="goToPage(${totalPages})">${totalPages}</button>`; }
                 html += `<button class="page-btn" ${currentPage === totalPages ? 'disabled' : ''} onclick="goToPage(${currentPage + 1})"><i class="fa-solid fa-angle-right"></i></button>`;
-                
                 document.getElementById('paginationBox').innerHTML = html;
             }
 
-            // নতুন পেজে যাওয়া
             function goToPage(p) {
                 if (p < 1) return;
                 loadMovies(p);
-                window.scrollTo({ top: 0, behavior: 'smooth' }); // স্ক্রল করে উপরে নিয়ে যাবে
+                window.scrollTo({ top: document.getElementById('movieGrid').offsetTop - 100, behavior: 'smooth' });
             }
 
             let timeout = null;
             document.getElementById('searchInput').addEventListener('input', function(e) {
                 clearTimeout(timeout); searchQuery = e.target.value.trim();
-                timeout = setTimeout(() => { loadMovies(1); }, 500); // সার্চ করলে পেজ ১ এ চলে যাবে
+                if(searchQuery !== "") document.getElementById('trendingWrapper').style.display = 'none';
+                else { document.getElementById('trendingWrapper').style.display = 'block'; loadTrending(); }
+                timeout = setTimeout(() => { loadMovies(1); }, 500); 
             });
 
             function handleMovieClick(id, isUnlocked) {
@@ -425,7 +447,7 @@ async def web_ui():
                 await fetch('/api/send', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({userId: uid, movieId: id})});
                 document.getElementById('adScreen').style.display = 'none';
                 document.getElementById('successModal').style.display = 'flex';
-                setTimeout(() => { loadMovies(currentPage); }, 1000); 
+                setTimeout(() => { loadTrending(); loadMovies(currentPage); }, 1000); 
             }
 
             function openReqModal() { document.getElementById('reqModal').style.display = 'flex'; }
@@ -439,7 +461,7 @@ async def web_ui():
                 alert('রিকোয়েস্ট সফলভাবে পাঠানো হয়েছে!');
             }
 
-            // অ্যাপ ওপেন হলে ১ নাম্বার পেজ লোড হবে
+            loadTrending();
             loadMovies(1); 
         </script>
     </body>
@@ -448,13 +470,29 @@ async def web_ui():
     html_code = html_code.replace("{{ZONE_ID}}", zone_id).replace("{{TG_LINK}}", tg_url).replace("{{LINK_18}}", link_18)
     return html_code
 
+@app.get("/api/trending")
+async def trending_movies(uid: int = 0):
+    unlocked_movie_ids = []
+    if uid != 0:
+        time_limit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+        async for u in db.user_unlocks.find({"user_id": uid, "unlocked_at": {"$gt": time_limit}}):
+            unlocked_movie_ids.append(u["movie_id"])
+
+    movies = []
+    # সবচেয়ে বেশি দেখা ১০টি মুভি আনা হচ্ছে (clicks ফিল্ড অনুযায়ী)
+    async for m in db.movies.find().sort("clicks", -1).limit(10):
+        m_id = str(m["_id"])
+        m["_id"] = m_id
+        m["is_unlocked"] = m_id in unlocked_movie_ids 
+        movies.append(m)
+    return movies
+
 @app.get("/api/list")
 async def list_movies(page: int = 1, q: str = "", uid: int = 0):
-    limit = 16  # এক পেজে ১৬টি মুভি দেখাবে
+    limit = 16
     skip = (page - 1) * limit
     query = {"title": {"$regex": q, "$options": "i"}} if q else {}
     
-    # মোট মুভির সংখ্যা বের করে কতগুলো পেজ হবে তা হিসেব করা
     total_movies = await db.movies.count_documents(query)
     total_pages = (total_movies + limit - 1) // limit
 
@@ -503,13 +541,14 @@ async def send_file(d: dict = Body(...)):
             if m.get("file_type") == "video": sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML")
             else: sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML")
             
+            # ডাটাবেসে Clicks আপডেট করা হচ্ছে (ট্রেন্ডিং এর জন্য)
+            await db.movies.update_one({"_id": ObjectId(mid)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": uid, "movie_id": mid}, {"$set": {"unlocked_at": datetime.datetime.utcnow()}}, upsert=True)
             
             if sent_msg:
                 delete_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=del_minutes)
                 await db.auto_delete.insert_one({"chat_id": uid, "message_id": sent_msg.message_id, "delete_at": delete_at})
-    except Exception as e: 
-        print("Send File Error:", e)
+    except Exception as e: pass
     return {"ok": True}
 
 class ReqModel(BaseModel):
