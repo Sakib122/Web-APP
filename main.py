@@ -27,9 +27,8 @@ client = AsyncIOMotorClient(MONGO_URL)
 db = client['movie_database']
 
 admin_temp = {}
-admin_cache = set([OWNER_ID]) # ক্যাশে অ্যাডমিনদের লিস্ট রাখা হচ্ছে যাতে বট ফাস্ট কাজ করে
+admin_cache = set([OWNER_ID]) 
 
-# বটের শুরুতে ডাটাবেস থেকে সব সাব-অ্যাডমিনদের লিস্ট লোড করবে
 async def load_admins():
     admin_cache.clear()
     admin_cache.add(OWNER_ID)
@@ -82,11 +81,11 @@ async def del_admin_cmd(m: types.Message):
 @dp.message(Command("adminlist"))
 async def list_admins_cmd(m: types.Message):
     if m.from_user.id != OWNER_ID: return
-    text = "👥 **বর্তমান অ্যাডমিন লিস্ট:**\n"
-    text += f"👑 Owner: `{OWNER_ID}`\n"
+    text = "👥 <b>বর্তমান অ্যাডমিন লিস্ট:</b>\n"
+    text += f"👑 Owner: <code>{OWNER_ID}</code>\n"
     for ad in admin_cache:
-        if ad != OWNER_ID: text += f"👮 Admin: `{ad}`\n"
-    await m.answer(text, parse_mode="Markdown")
+        if ad != OWNER_ID: text += f"👮 Admin: <code>{ad}</code>\n"
+    await m.answer(text, parse_mode="HTML")
 
 # ==========================================
 # ২. বটের সাধারণ অ্যাডমিন কমান্ড
@@ -104,6 +103,7 @@ async def start_cmd(message: types.Message):
             "👋 <b>হ্যালো অ্যাডমিন!</b>\n\n"
             "⚙️ <b>কমান্ড:</b>\n"
             "🔸 জোন: <code>/setad</code> | টেলিগ্রাম: <code>/settg</code> | 18+: <code>/set18</code>\n"
+            "🔸 প্রোটেকশন: <code>/protect on</code> বা <code>/protect off</code>\n"
             "🔸 অটো-ডিলিট টাইম: <code>/settime [মিনিট]</code>\n"
             "🔸 ডিলিট: <code>/del</code> | স্ট্যাটাস: <code>/stats</code> | ব্রডকাস্ট: <code>/cast</code>\n"
         )
@@ -115,6 +115,22 @@ async def start_cmd(message: types.Message):
         text = f"👋 <b>স্বাগতম {message.from_user.first_name}!</b>\n\n[আপনার টেলিগ্রাম আইডি: <code>{uid}</code>]\n\nমুভি দেখতে নিচের বাটনে ক্লিক করুন।"
     await message.answer(text, reply_markup=markup, parse_mode="HTML")
 
+@dp.message(Command("protect"))
+async def protect_cmd(m: types.Message):
+    if m.from_user.id not in admin_cache: return
+    try:
+        state = m.text.split(" ")[1].lower()
+        if state == "on":
+            await db.settings.update_one({"id": "protect_content"}, {"$set": {"status": True}}, upsert=True)
+            await m.answer("✅ ফরোয়ার্ড প্রোটেকশন <b>চালু (ON)</b> করা হয়েছে। এখন কেউ মুভি ফরোয়ার্ড বা সেভ করতে পারবে না।", parse_mode="HTML")
+        elif state == "off":
+            await db.settings.update_one({"id": "protect_content"}, {"$set": {"status": False}}, upsert=True)
+            await m.answer("✅ ফরোয়ার্ড প্রোটেকশন <b>বন্ধ (OFF)</b> করা হয়েছে। এখন সবাই মুভি ফরোয়ার্ড করতে পারবে।", parse_mode="HTML")
+        else:
+            await m.answer("⚠️ সঠিক নিয়ম: <code>/protect on</code> অথবা <code>/protect off</code>", parse_mode="HTML")
+    except:
+        await m.answer("⚠️ সঠিক নিয়ম: <code>/protect on</code> অথবা <code>/protect off</code>", parse_mode="HTML")
+
 @dp.message(Command("stats"))
 async def stats_cmd(m: types.Message):
     if m.from_user.id not in admin_cache: return
@@ -122,7 +138,10 @@ async def stats_cmd(m: types.Message):
     mc = await db.movies.count_documents({})
     time_cfg = await db.settings.find_one({"id": "del_time"})
     del_m = time_cfg['minutes'] if time_cfg else 60
-    await m.answer(f"📊 <b>স্ট্যাটাস:</b>\n👥 মোট ইউজার: <code>{uc}</code>\n🎬 মোট মুভি: <code>{mc}</code>\n⏳ অটো-ডিলিট: <code>{del_m} মিনিট</code>", parse_mode="HTML")
+    protect_cfg = await db.settings.find_one({"id": "protect_content"})
+    prot_status = "ON 🔒" if protect_cfg and protect_cfg.get('status', True) else "OFF 🔓"
+    
+    await m.answer(f"📊 <b>স্ট্যাটাস:</b>\n👥 মোট ইউজার: <code>{uc}</code>\n🎬 মোট মুভি: <code>{mc}</code>\n⏳ অটো-ডিলিট: <code>{del_m} মিনিট</code>\n🛡️ প্রোটেকশন: <b>{prot_status}</b>", parse_mode="HTML")
 
 @dp.message(Command("del"))
 async def del_movie_list(m: types.Message):
@@ -183,13 +202,12 @@ async def set_18(m: types.Message):
 async def broadcast_prep(m: types.Message):
     if m.from_user.id not in admin_cache: return
     admin_temp[m.from_user.id] = {"step": "bcast_wait"}
-    await m.answer("📢 <b>অ্যাডভান্সড ব্রডকাস্ট:</b>\nযে মেসেজটি (ছবি/ভিডিও/টেক্সট) ব্রডকাস্ট করতে চান, সেটি এখানে পাঠান বা ফরোয়ার্ড করুন।\n\n<i>নোট: বট অটোমেটিক মেসেজের নিচে '🎬 ওপেন মুভি অ্যাপ' বাটন লাগিয়ে সবাইকে পাঠিয়ে দিবে।</i>", parse_mode="HTML")
+    await m.answer("📢 <b>অ্যাডভান্সড ব্রডকাস্ট:</b>\nযে মেসেজটি ব্রডকাস্ট করতে চান সেটি পাঠান।\n<i>নোট: বট অটোমেটিক মেসেজের নিচে '🎬 ওপেন মুভি অ্যাপ' বাটন লাগিয়ে দিবে।</i>", parse_mode="HTML")
 
 @dp.message(F.content_type.in_({'text', 'photo', 'video', 'document'}))
 async def catch_all_inputs(m: types.Message):
     uid = m.from_user.id
     
-    # ব্রডকাস্ট
     if uid in admin_cache and admin_temp.get(uid, {}).get("step") == "bcast_wait":
         del admin_temp[uid]
         await m.answer("⏳ ব্রডকাস্ট শুরু হয়েছে...")
@@ -204,7 +222,6 @@ async def catch_all_inputs(m: types.Message):
         await m.answer(f"✅ সম্পন্ন! সর্বমোট <b>{success}</b> জনকে মেসেজ পাঠানো হয়েছে।", parse_mode="HTML")
         return
 
-    # আপলোড ফ্লো
     if uid in admin_cache and (m.document or m.video):
         fid = m.video.file_id if m.video else m.document.file_id
         ftype = "video" if m.video else "document"
@@ -383,19 +400,18 @@ async def web_ui():
                 let html = ""; for(let i=0; i<count; i++) html += `<div class="skeleton"></div>`; return html;
             }
 
-            // ট্রেন্ডিং মুভি অটো-স্ক্রোল ফাংশন
             function startAutoScroll() {
                 setInterval(() => {
                     let grid = document.getElementById('trendingGrid');
                     if(grid) {
-                        let cardWidth = 142; // কার্ডের প্রস্থ + গ্যাপ
+                        let cardWidth = 142;
                         if (grid.scrollLeft >= (grid.scrollWidth - grid.clientWidth - 10)) {
-                            grid.scrollTo({ left: 0, behavior: 'smooth' }); // শেষে পৌঁছালে শুরুতে আসবে
+                            grid.scrollTo({ left: 0, behavior: 'smooth' });
                         } else {
-                            grid.scrollBy({ left: cardWidth, behavior: 'smooth' }); // ১টি করে কার্ড স্ক্রল হবে
+                            grid.scrollBy({ left: cardWidth, behavior: 'smooth' });
                         }
                     }
-                }, 3000); // প্রতি ৩ সেকেন্ড পর পর স্ক্রল হবে
+                }, 3000);
             }
 
             async function loadTrending() {
@@ -420,7 +436,6 @@ async def web_ui():
                         </div>`;
                     }).join('');
                     
-                    // অটো-স্ক্রোল চালু করা হলো
                     setTimeout(startAutoScroll, 2000);
                 } catch(e) {}
             }
@@ -595,11 +610,17 @@ async def send_file(d: dict = Body(...)):
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
             
-            caption = f"🎥 <b>{m['title']}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @TGLinkBase"
+            # প্রোটেক্ট কন্টেন্ট চেক করা হচ্ছে (ডিফল্ট True রাখা হয়েছে নিরাপত্তার জন্য)
+            protect_cfg = await db.settings.find_one({"id": "protect_content"})
+            is_protected = protect_cfg['status'] if protect_cfg else True
+            
+            caption = f"🎥 <b>{m['title']}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @MovieeBD"
             
             sent_msg = None
-            if m.get("file_type") == "video": sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML")
-            else: sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML")
+            if m.get("file_type") == "video": 
+                sent_msg = await bot.send_video(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
+            else: 
+                sent_msg = await bot.send_document(uid, m['file_id'], caption=caption, parse_mode="HTML", protect_content=is_protected)
             
             await db.movies.update_one({"_id": ObjectId(mid)}, {"$inc": {"clicks": 1}})
             await db.user_unlocks.update_one({"user_id": uid, "movie_id": mid}, {"$set": {"unlocked_at": datetime.datetime.utcnow()}}, upsert=True)
@@ -620,7 +641,6 @@ async def handle_request(data: ReqModel):
     return {"ok": True}
 
 async def start():
-    # স্টার্ট করার সময় আগে ডাটাবেস থেকে সব অ্যাডমিন লোড করা হচ্ছে
     await load_admins()
     
     port = int(os.getenv("PORT", 8000))
