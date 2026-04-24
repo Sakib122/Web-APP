@@ -126,10 +126,8 @@ async def protect_cmd(m: types.Message):
         elif state == "off":
             await db.settings.update_one({"id": "protect_content"}, {"$set": {"status": False}}, upsert=True)
             await m.answer("✅ ফরোয়ার্ড প্রোটেকশন <b>বন্ধ (OFF)</b> করা হয়েছে। এখন সবাই মুভি ফরোয়ার্ড করতে পারবে।", parse_mode="HTML")
-        else:
-            await m.answer("⚠️ সঠিক নিয়ম: <code>/protect on</code> অথবা <code>/protect off</code>", parse_mode="HTML")
-    except:
-        await m.answer("⚠️ সঠিক নিয়ম: <code>/protect on</code> অথবা <code>/protect off</code>", parse_mode="HTML")
+        else: await m.answer("⚠️ সঠিক নিয়ম: <code>/protect on</code> অথবা <code>/protect off</code>", parse_mode="HTML")
+    except: await m.answer("⚠️ সঠিক নিয়ম: <code>/protect on</code> অথবা <code>/protect off</code>", parse_mode="HTML")
 
 @dp.message(Command("stats"))
 async def stats_cmd(m: types.Message):
@@ -195,7 +193,7 @@ async def set_18(m: types.Message):
         except: await m.answer("⚠️ সঠিক নিয়ম: <code>/set18 https://t.me/...</code>", parse_mode="HTML")
 
 # ==========================================
-# ৩. অ্যাডভান্সড ব্রডকাস্ট এবং ফাইল আপলোড
+# ৩. ইনপুট প্রসেসিং (আপলোড, ব্রডকাস্ট, রিপ্লাই)
 # ==========================================
 
 @dp.message(Command("cast"))
@@ -204,10 +202,31 @@ async def broadcast_prep(m: types.Message):
     admin_temp[m.from_user.id] = {"step": "bcast_wait"}
     await m.answer("📢 <b>অ্যাডভান্সড ব্রডকাস্ট:</b>\nযে মেসেজটি ব্রডকাস্ট করতে চান সেটি পাঠান।\n<i>নোট: বট অটোমেটিক মেসেজের নিচে '🎬 ওপেন মুভি অ্যাপ' বাটন লাগিয়ে দিবে।</i>", parse_mode="HTML")
 
-@dp.message(F.content_type.in_({'text', 'photo', 'video', 'document'}))
+@dp.callback_query(F.data.startswith("reply_"))
+async def process_reply_cb(c: types.CallbackQuery):
+    if c.from_user.id not in admin_cache: return
+    user_id = int(c.data.split("_")[1])
+    admin_temp[c.from_user.id] = {"step": "reply_user", "target_uid": user_id}
+    await c.message.reply("✍️ <b>ইউজারকে কী রিপ্লাই দিতে চান তা লিখে পাঠান:</b>\n(টেক্সট, ছবি বা ভয়েস মেসেজ পাঠাতে পারেন)", parse_mode="HTML")
+    await c.answer()
+
+@dp.message(F.content_type.in_({'text', 'photo', 'video', 'document', 'voice'}))
 async def catch_all_inputs(m: types.Message):
     uid = m.from_user.id
     
+    # ইউজারকে রিপ্লাই দেওয়ার ফ্লো
+    if uid in admin_cache and admin_temp.get(uid, {}).get("step") == "reply_user":
+        target_uid = admin_temp[uid]["target_uid"]
+        del admin_temp[uid]
+        try:
+            if m.text: await bot.send_message(target_uid, f"📩 <b>অ্যাডমিন রিপ্লাই:</b>\n\n{m.text}", parse_mode="HTML")
+            else: await m.copy_to(target_uid, caption=f"📩 <b>অ্যাডমিন রিপ্লাই:</b>\n\n{m.caption or ''}", parse_mode="HTML")
+            await m.answer("✅ ইউজারকে সফলভাবে রিপ্লাই পাঠানো হয়েছে!")
+        except Exception:
+            await m.answer("⚠️ রিপ্লাই পাঠানো যায়নি! ইউজার হয়তো বট ব্লক করেছে।")
+        return
+
+    # ব্রডকাস্ট ফ্লো
     if uid in admin_cache and admin_temp.get(uid, {}).get("step") == "bcast_wait":
         del admin_temp[uid]
         await m.answer("⏳ ব্রডকাস্ট শুরু হয়েছে...")
@@ -222,6 +241,7 @@ async def catch_all_inputs(m: types.Message):
         await m.answer(f"✅ সম্পন্ন! সর্বমোট <b>{success}</b> জনকে মেসেজ পাঠানো হয়েছে।", parse_mode="HTML")
         return
 
+    # মুভি আপলোড ফ্লো
     if uid in admin_cache and (m.document or m.video):
         fid = m.video.file_id if m.video else m.document.file_id
         ftype = "video" if m.video else "document"
@@ -303,6 +323,9 @@ async def web_ui():
             .tag-unlocked { background:rgba(0,0,0,0.85); color:#10b981; border: 1px solid #10b981; }
             
             .top-badge { position:absolute; top:8px; left:8px; background:red; color:white; padding:3px 6px; border-radius:6px; font-size:10px; font-weight:bold; box-shadow: 0 2px 5px rgba(0,0,0,0.5); z-index:10;}
+            
+            /* নতুন: ভিউ কাউন্টার স্টাইল */
+            .view-badge { position:absolute; bottom:8px; left:8px; background:rgba(0,0,0,0.7); color:#fff; padding:3px 6px; border-radius:6px; font-size:11px; font-weight:bold; display:flex; align-items:center; gap:4px; box-shadow: 0 2px 5px rgba(0,0,0,0.5); }
 
             .card-footer { padding:10px; font-size:13px; font-weight:bold; text-align:center; word-wrap: break-word; color:#e2e8f0; line-height:1.4; }
             
@@ -431,6 +454,7 @@ async def web_ui():
                                 <div class="top-badge">🔥 TOP</div>
                                 <img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/400x200?text=No+Image'">
                                 ${tagHtml}
+                                <div class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks}</div>
                             </div>
                             <div class="card-footer" style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${m.title}</div>
                         </div>`;
@@ -465,6 +489,7 @@ async def web_ui():
                                 <div class="post-content">
                                     <img src="/api/image/${m.photo_id}" onerror="this.src='https://via.placeholder.com/400x200?text=No+Image'">
                                     ${tagHtml}
+                                    <div class="view-badge"><i class="fa-solid fa-eye"></i> ${m.clicks}</div>
                                 </div>
                                 <div class="card-footer">${m.title}</div>
                             </div>`;
@@ -558,6 +583,7 @@ async def trending_movies(uid: int = 0):
     async for m in db.movies.find().sort("clicks", -1).limit(10):
         m_id = str(m["_id"])
         m["_id"] = m_id
+        m["clicks"] = m.get("clicks", 0)
         m["is_unlocked"] = m_id in unlocked_movie_ids 
         movies.append(m)
     return movies
@@ -581,6 +607,7 @@ async def list_movies(page: int = 1, q: str = "", uid: int = 0):
     async for m in db.movies.find(query).sort("created_at", -1).skip(skip).limit(limit):
         m_id = str(m["_id"])
         m["_id"] = m_id
+        m["clicks"] = m.get("clicks", 0)
         m["created_at"] = str(m.get("created_at", ""))
         m["is_unlocked"] = m_id in unlocked_movie_ids 
         movies.append(m)
@@ -610,11 +637,10 @@ async def send_file(d: dict = Body(...)):
             time_cfg = await db.settings.find_one({"id": "del_time"})
             del_minutes = time_cfg['minutes'] if time_cfg else 60
             
-            # প্রোটেক্ট কন্টেন্ট চেক করা হচ্ছে (ডিফল্ট True রাখা হয়েছে নিরাপত্তার জন্য)
             protect_cfg = await db.settings.find_one({"id": "protect_content"})
             is_protected = protect_cfg['status'] if protect_cfg else True
             
-            caption = f"🎥 <b>{m['title']}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @TGLinkBase"
+            caption = f"🎥 <b>{m['title']}</b>\n\n⏳ <b>সতর্কতা:</b> কপিরাইট এড়াতে মুভিটি <b>{del_minutes} মিনিট</b> পর অটো-ডিলিট হয়ে যাবে। দয়া করে এখনই ফরওয়ার্ড বা সেভ করে নিন!\n\n📥 Join: @MovieeBD"
             
             sent_msg = None
             if m.get("file_type") == "video": 
@@ -636,13 +662,22 @@ class ReqModel(BaseModel):
 
 @app.post("/api/request")
 async def handle_request(data: ReqModel):
-    try: await bot.send_message(OWNER_ID, f"🔔 <b>মুভি রিকোয়েস্ট!</b>\n\n👤 ইউজার: {data.uname} (<code>{data.uid}</code>)\n🎬 নাম: <b>{data.movie}</b>", parse_mode="HTML")
+    try: 
+        # অ্যাডমিনের কাছে "রিপ্লাই দিন" বাটনসহ মেসেজ যাবে
+        builder = InlineKeyboardBuilder()
+        builder.button(text="✍️ রিপ্লাই দিন", callback_data=f"reply_{data.uid}")
+        
+        await bot.send_message(
+            OWNER_ID, 
+            f"🔔 <b>নতুন মুভি রিকোয়েস্ট!</b>\n\n👤 ইউজার: {data.uname} (<code>{data.uid}</code>)\n🎬 মুভির নাম: <b>{data.movie}</b>", 
+            parse_mode="HTML", 
+            reply_markup=builder.as_markup()
+        )
     except: pass
     return {"ok": True}
 
 async def start():
     await load_admins()
-    
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config(app, host="0.0.0.0", port=port, loop="asyncio")
     server = uvicorn.Server(config)
