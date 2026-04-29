@@ -44,7 +44,7 @@ OWNER_ID = int(os.getenv("ADMIN_ID", "0"))
 APP_URL = os.getenv("APP_URL")
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1003904328439") 
 ADMIN_PASS = os.getenv("ADMIN_PASS", "admin123") 
-BOT_USERNAME = "BDMovieZoneBot" # আপনার বটের ইউজারনেম
+BOT_USERNAME = "bdlatestmovie_bot" # আপনার বটের ইউজারনেম
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -1093,7 +1093,7 @@ async def web_ui():
     </head>
     <body onclick="closeMenu(event)">
         <header>
-            <div class="logo">MovieZone <span>BD</span></div>
+            <div class="logo">Latest Movie <span>BD</span></div>
             <div class="header-right">
                 <div style="display: flex; flex-direction: column; align-items: flex-end;">
                     <div class="user-info">
